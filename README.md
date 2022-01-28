@@ -8,7 +8,7 @@ API to generate a random word as well as validate guesses.
 ## Usage
 ```shell
 ./sshwordle -h
-Usage of ./wordle:
+Usage of ./sshwordle:
   -api
     	Use WordAPI to generate and verify words. If not specified uses hardcoded list of words from original Wordle game
   -host string
@@ -20,5 +20,5 @@ Usage of ./wordle:
 
 ## Building
 ```shell
-go build
+make build
 ```
