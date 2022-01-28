@@ -1,0 +1,4 @@
+.ssh
+sshwordle
+!src/sshwordle/
+.idea
