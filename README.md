@@ -1,5 +1,5 @@
 # SSHWordle
-Terminal based [wordle](https://www.powerlanguage.co.uk/wordle/) clone. Uses the amazing charm.sh 
+Terminal based [wordle](https://www.powerlanguage.co.uk/wordle/) clone. Uses the amazing [charm.sh](https://charm.sh)
 libraries to render and expose the game over SSH. Stores  user statistics by IP. Supports 
 pluggable backends. Currently includes a static file backend which uses the word lists from 
 the original game, as well as an API based backend which uses the [WordsAPI.com](https://www.wordsapi.com/)
