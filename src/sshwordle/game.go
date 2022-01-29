@@ -74,6 +74,7 @@ type Guess struct {
 
 type Game struct {
 	backend      Backend
+	complete     bool
 	currentGuess int
 	currentCol   int
 	guesses      [][]*Guess
@@ -126,12 +127,12 @@ func NewGame(width int, height int, session ssh.Session, backend Backend) Game {
 	}
 }
 
-type wonMsg struct{}
+type gameCompleteMsg struct{}
 type invalidMsg struct{}
 type showPostGameMsg struct{}
 
-func Won() tea.Msg {
-	return wonMsg{}
+func GameComplete() tea.Msg {
+	return gameCompleteMsg{}
 }
 
 func InvalidWord() tea.Msg {
@@ -162,9 +163,10 @@ func (g *Game) setAllGuesses(color guessColor) {
 }
 
 func (g *Game) handleEnter() tea.Cmd {
-	if g.currentCol != len(g.word) || g.currentGuess >= g.maxGuesses-1 {
+	if g.currentCol != len(g.word) || g.currentGuess >= g.maxGuesses {
 		return nil
 	}
+
 	current := g.guesses[g.currentGuess][g.currentCol-1]
 	if current == nil || current.letter == "" {
 		return nil
@@ -173,7 +175,11 @@ func (g *Game) handleEnter() tea.Cmd {
 		return InvalidWord
 	}
 	if won := g.gradeCurrentGuess(); won {
-		return Won
+		g.won = true
+		return GameComplete
+	}
+	if g.currentGuess >= g.maxGuesses-1 {
+		return GameComplete
 	}
 	g.currentGuess++
 	g.currentCol = 0
@@ -190,7 +196,7 @@ func (g *Game) handleBackspace() {
 }
 
 func (g *Game) handleLetterPress(k string) {
-	if g.currentCol < len(g.word) {
+	if g.currentCol < len(g.word) && g.currentGuess <= g.maxGuesses-1 {
 		g.guesses[g.currentGuess][g.currentCol].letter = k
 		g.currentCol++
 	}
@@ -315,7 +321,7 @@ func (g Game) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case gameResultsMsg:
 		g.results = msg
-	case wonMsg:
+	case gameCompleteMsg:
 		result := GameResult{
 			Elapsed:    g.stopwatch.Elapsed(),
 			GuessCount: g.currentGuess + 1,
@@ -326,7 +332,7 @@ func (g Game) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, g.stopwatch.Stop())
 		cmds = append(cmds, g.saveGameResult())
 	case showPostGameMsg:
-		g.won = true
+		g.complete = true
 	case invalidMsg:
 		g.setAllGuesses(red)
 	}
@@ -349,7 +355,7 @@ func (g Game) saveGameResult() tea.Cmd {
 func (g Game) View() string {
 	if g.results == nil {
 		g.viewport.SetContent(fmt.Sprintf("Welcome %s, Loading your stats...", g.Identifier()))
-	} else if !g.won {
+	} else if !g.complete {
 		g.viewport.SetContent(g.renderGameBoard())
 	} else {
 		g.viewport.SetContent(g.renderPostGame())
@@ -451,27 +457,32 @@ func (g Game) getGameStats() *GameStats {
 }
 
 func (g Game) renderPostGame() string {
-	plural := ""
-	if g.currentGuess > 0 {
-		plural = "es"
-	}
+	output := ""
 
-	output := fmt.Sprintf(
-		"Congrats! You won in %s with %d guess%s!\n\n",
-		g.stopwatch.Elapsed().String(),
-		g.currentGuess+1,
-		plural,
-	)
+	if g.won {
+		plural := ""
+		if g.currentGuess > 0 {
+			plural = "es"
+		}
+		output = fmt.Sprintf(
+			"Congrats! You won in %s with %d guess%s!\n\n",
+			g.stopwatch.Elapsed().String(),
+			g.currentGuess+1,
+			plural,
+		)
 
-	stats := g.getGameStats()
-	output += fmt.Sprintf("Average Guess: %.2f\n", stats.AverageGuess)
-	output += fmt.Sprintf("Average Seconds: %.2f\n", stats.AverageTime)
-	output += "\n\n"
+		stats := g.getGameStats()
+		output += fmt.Sprintf("Average Guess: %.2f\n", stats.AverageGuess)
+		output += fmt.Sprintf("Average Seconds: %.2f\n", stats.AverageTime)
+		output += "\n\n"
 
-	for i := range stats.GuessCounts {
-		prog := progress.New(progress.WithDefaultScaledGradient())
-		prog.Width = g.width / 4
-		output += fmt.Sprintf("%d: %s\n", i+1, prog.ViewAs(float64(stats.GuessCounts[i])/stats.Count))
+		for i := range stats.GuessCounts {
+			prog := progress.New(progress.WithDefaultScaledGradient())
+			prog.Width = g.width / 4
+			output += fmt.Sprintf("%d: %s\n", i+1, prog.ViewAs(float64(stats.GuessCounts[i])/stats.Count))
+		}
+	} else {
+		output = fmt.Sprintf("Unlucky. The word was %s. Better luck next time!", g.word)
 	}
 
 	output = g.center(winnerStyle.Render(output))
