@@ -1,6 +1,7 @@
 package sshwordle
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"github.com/charmbracelet/bubbles/progress"
@@ -79,6 +80,7 @@ type Game struct {
 	currentCol   int
 	guesses      [][]*Guess
 	height       int
+	identifier   string
 	keyboard     map[string]guessColor
 	maxGuesses   int
 	session      ssh.Session
@@ -113,10 +115,15 @@ func NewGame(width int, height int, session ssh.Session, backend Backend) Game {
 		}
 	}
 
+	h := sha256.New()
+	h.Write(session.PublicKey().Marshal())
+	identifier := fmt.Sprintf("%x", h.Sum(nil))
+
 	return Game{
 		backend:    backend,
 		guesses:    guesses,
 		height:     height,
+		identifier: identifier,
 		keyboard:   makeKeyboard(),
 		maxGuesses: len(guesses),
 		stopwatch:  stopwatch.NewWithInterval(time.Second),
@@ -139,13 +146,8 @@ func InvalidWord() tea.Msg {
 	return invalidMsg{}
 }
 
-func (g Game) Identifier() string {
-	network := strings.Split(g.session.RemoteAddr().String(), ":")
-	return network[0]
-}
-
 func (g Game) Init() tea.Cmd {
-	return tea.Batch(g.stopwatch.Init(), getGameResults(g.Identifier()))
+	return tea.Batch(g.stopwatch.Init(), getGameResults(g.identifier))
 }
 
 func isLetter(key string) bool {
@@ -354,7 +356,7 @@ func (g Game) saveGameResult() tea.Cmd {
 
 func (g Game) View() string {
 	if g.results == nil {
-		g.viewport.SetContent(fmt.Sprintf("Welcome %s, Loading your stats...", g.Identifier()))
+		g.viewport.SetContent(fmt.Sprintf("Welcome %s, Loading your stats...", g.identifier))
 	} else if !g.complete {
 		g.viewport.SetContent(g.renderGameBoard())
 	} else {
@@ -384,7 +386,7 @@ func (g *Game) saveGameResults() {
 	}
 	defer db.Close()
 
-	err = db.Set([]byte(g.Identifier()), resultsBytes)
+	err = db.Set([]byte(g.identifier), resultsBytes)
 	if err != nil {
 		log.Fatalln(err)
 	}

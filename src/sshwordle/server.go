@@ -21,6 +21,7 @@ import (
 func StartServer(host string, port int, useApi bool) {
 	s, err := wish.NewServer(
 		wish.WithAddress(fmt.Sprintf("%s:%d", host, port)),
+		wish.WithPublicKeyAuth(publicKeyHandler),
 		wish.WithHostKeyPath(".ssh/term_info_ed25519"),
 		wish.WithMiddleware(
 			bm.Middleware(getTeaHandler(useApi)),
@@ -48,6 +49,10 @@ func StartServer(host string, port int, useApi bool) {
 	if err := s.Shutdown(ctx); err != nil {
 		log.Fatalln(err)
 	}
+}
+
+func publicKeyHandler(_ctx ssh.Context, _key ssh.PublicKey) bool {
+	return true
 }
 
 func getTeaHandler(useApi bool) bm.BubbleTeaHandler {
