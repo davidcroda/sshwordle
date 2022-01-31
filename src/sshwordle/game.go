@@ -282,7 +282,7 @@ func (g Game) footerView() string {
 	info := infoStyle.Render(fmt.Sprintf("Guess %d/%d, Elapsed: %s", g.currentGuess+1, g.maxGuesses, g.stopwatch.View()))
 	help := helpStyle.Render(fmt.Sprintf("ctrl+c - quit"))
 	line := strings.Repeat("─", max(0, g.viewport.Width-lipgloss.Width(info)-lipgloss.Width(help)))
-	return lipgloss.JoinHorizontal(lipgloss.Center, help, line, info)
+	return lipgloss.JoinHorizontal(lipgloss.Center, help, line, info) + "\n"
 }
 
 func (g Game) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
