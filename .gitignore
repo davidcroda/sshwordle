@@ -2,3 +2,4 @@
 sshwordle
 !src/sshwordle/
 .idea
+db.sqlite

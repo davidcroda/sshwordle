@@ -2,11 +2,12 @@ package sshwordle
 
 import (
 	"crypto/sha256"
-	"encoding/json"
+	"database/sql"
 	"fmt"
 	"github.com/charmbracelet/bubbles/progress"
 	"github.com/gliderlabs/ssh"
 	"log"
+	_ "modernc.org/sqlite"
 	"regexp"
 	"strings"
 	"time"
@@ -14,7 +15,6 @@ import (
 	"github.com/charmbracelet/bubbles/stopwatch"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/charm/kv"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -75,6 +75,7 @@ type Guess struct {
 
 type Game struct {
 	backend      Backend
+	db           *sql.DB
 	complete     bool
 	currentGuess int
 	currentCol   int
@@ -103,7 +104,7 @@ func makeKeyboard() map[string]guessColor {
 
 var difficulty = 5
 
-func NewGame(width int, height int, session ssh.Session, backend Backend) Game {
+func makeGuessesSlice() [][]*Guess {
 	guesses := make([][]*Guess, difficulty+1)
 	for i := range guesses {
 		guesses[i] = make([]*Guess, difficulty)
@@ -114,6 +115,21 @@ func NewGame(width int, height int, session ssh.Session, backend Backend) Game {
 			}
 		}
 	}
+	return guesses
+}
+
+func openDb() *sql.DB {
+	db, err := sql.Open("sqlite", "file:///tmp/db.sqlite")
+	if err != nil {
+		log.Panic(err)
+	}
+	return db
+}
+
+func NewGame(width int, height int, session ssh.Session, backend Backend) Game {
+	guesses := makeGuessesSlice()
+
+	db := openDb()
 
 	h := sha256.New()
 	h.Write(session.PublicKey().Marshal())
@@ -121,6 +137,7 @@ func NewGame(width int, height int, session ssh.Session, backend Backend) Game {
 
 	return Game{
 		backend:    backend,
+		db:         db,
 		guesses:    guesses,
 		height:     height,
 		identifier: identifier,
@@ -147,7 +164,7 @@ func InvalidWord() tea.Msg {
 }
 
 func (g Game) Init() tea.Cmd {
-	return tea.Batch(g.stopwatch.Init(), getGameResults(g.identifier))
+	return tea.Batch(g.stopwatch.Init(), g.getGameResults(g.identifier))
 }
 
 func isLetter(key string) bool {
@@ -281,7 +298,7 @@ func (g Game) headerView() string {
 }
 
 func (g Game) footerView() string {
-	info := infoStyle.Render(fmt.Sprintf("Guess %d/%d, Elapsed: %s", g.currentGuess+1, g.maxGuesses, g.stopwatch.View()))
+	info := infoStyle.Render(fmt.Sprintf("Guess %d/%d, Seconds: %s", g.currentGuess+1, g.maxGuesses, g.stopwatch.View()))
 	help := helpStyle.Render(fmt.Sprintf("ctrl+c - quit"))
 	line := strings.Repeat("─", max(0, g.viewport.Width-lipgloss.Width(info)-lipgloss.Width(help)))
 	return lipgloss.JoinHorizontal(lipgloss.Center, help, line, info) + "\n"
@@ -305,6 +322,10 @@ func (g Game) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		k := strings.ToLower(msg.String())
 		if k == "ctrl+c" {
+			err := g.db.Close()
+			if err != nil {
+				log.Fatal(err)
+			}
 			return g, tea.Quit
 		} else if g.won {
 			return g, nil
@@ -325,14 +346,14 @@ func (g Game) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		g.results = msg
 	case gameCompleteMsg:
 		result := GameResult{
-			Elapsed:    g.stopwatch.Elapsed(),
+			Seconds:    g.stopwatch.Elapsed(),
 			GuessCount: g.currentGuess + 1,
 			Word:       g.word,
-			Date:       time.Now(),
+			Timestamp:  time.Now().Second(),
 		}
 		g.results = append(g.results, result)
 		cmds = append(cmds, g.stopwatch.Stop())
-		cmds = append(cmds, g.saveGameResult())
+		cmds = append(cmds, g.saveGameResult(&result))
 	case showPostGameMsg:
 		g.complete = true
 	case invalidMsg:
@@ -347,115 +368,13 @@ func (g Game) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return g, tea.Batch(cmds...)
 }
 
-func (g Game) saveGameResult() tea.Cmd {
-	return func() tea.Msg {
-		g.saveGameResults()
-		return showPostGameMsg{}
-	}
-}
-
 func (g Game) View() string {
-	if g.results == nil {
-		g.viewport.SetContent(fmt.Sprintf("Welcome %s, Loading your stats...", g.identifier))
-	} else if !g.complete {
+	if !g.complete {
 		g.viewport.SetContent(g.renderGameBoard())
 	} else {
 		g.viewport.SetContent(g.renderPostGame())
 	}
 	return fmt.Sprintf("%s\n%s\n%s", g.headerView(), g.viewport.View(), g.footerView())
-}
-
-type GameResult struct {
-	Elapsed    time.Duration `json:"elapsed"`
-	GuessCount int           `json:"guessCount"`
-	Word       string        `json:"word"`
-	Date       time.Time     `json:"date"`
-}
-
-const dbName = "game-results-db"
-
-func (g *Game) saveGameResults() {
-	resultsBytes, err := json.Marshal(g.results)
-	if err != nil {
-		log.Fatalln(err)
-	}
-
-	db, err := kv.OpenWithDefaults(dbName)
-	if err != nil {
-		log.Fatalln(err)
-	}
-	defer db.Close()
-
-	err = db.Set([]byte(g.identifier), resultsBytes)
-	if err != nil {
-		log.Fatalln(err)
-	}
-}
-
-type gameResultsMsg []GameResult
-
-func getGameResults(id string) tea.Cmd {
-	return func() tea.Msg {
-		db, err := kv.OpenWithDefaults(dbName)
-		if err != nil {
-			log.Fatalln(err)
-		}
-		defer db.Close()
-
-		if err := db.Sync(); err != nil {
-			log.Fatalln(err)
-		}
-
-		value, err := db.Get([]byte(id))
-		if err != nil && err.Error() == "Key not found" {
-			value = []byte("[]")
-		} else if err != nil {
-			log.Fatalln(err)
-		}
-
-		log.Printf("%s\n", value)
-
-		var results []GameResult
-		err = json.Unmarshal(value, &results)
-		if err != nil {
-			log.Fatalln(err)
-		}
-
-		return gameResultsMsg(results)
-	}
-}
-
-type GameStats struct {
-	GuessCounts  []int
-	TotalGuesses float64
-	TotalTime    float64
-	Count        float64
-	AverageGuess float64
-	AverageTime  float64
-}
-
-func (g Game) getGameStats() *GameStats {
-	guessCount := make([]int, 6)
-	totalGuesses := 0.0
-	totalTime := 0.0
-	count := 0.0
-	for i := range g.results {
-		result := g.results[i]
-		guessCount[result.GuessCount-1]++
-		totalGuesses += float64(result.GuessCount)
-		totalTime += result.Elapsed.Seconds()
-		count++
-	}
-	averageGuess := totalGuesses / count
-	averageTime := totalTime / count
-	return &GameStats{
-		GuessCounts:  guessCount,
-		TotalGuesses: totalGuesses,
-		TotalTime:    totalTime,
-		Count:        count,
-		AverageGuess: averageGuess,
-		AverageTime:  averageTime,
-	}
 }
 
 func (g Game) renderPostGame() string {
@@ -484,7 +403,7 @@ func (g Game) renderPostGame() string {
 			output += fmt.Sprintf("%d: %s\n", i+1, prog.ViewAs(float64(stats.GuessCounts[i])/stats.Count))
 		}
 	} else {
-		output = fmt.Sprintf("Unlucky. The word was %s. Better luck next time!", g.word)
+		output = fmt.Sprintf("Unlucky. The word was \"%s\". Better luck next time!", g.word)
 	}
 
 	output = g.center(winnerStyle.Render(output))
