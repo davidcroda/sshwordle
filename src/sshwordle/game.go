@@ -327,6 +327,12 @@ func (g Game) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				log.Fatal(err)
 			}
 			return g, tea.Quit
+		} else if k == " " {
+			if g.complete {
+				ng := NewGame(g.width, g.height, g.session, g.backend)
+				return ng, ng.Init()
+			}
+			return g, nil
 		} else if g.won {
 			return g, nil
 		} else if k == "*" {
@@ -406,6 +412,7 @@ func (g Game) renderPostGame() string {
 		output = fmt.Sprintf("Unlucky. The word was \"%s\". Better luck next time!", g.word)
 	}
 
+	output += "\n\nPress [SPACE] to play again..."
 	output = g.center(winnerStyle.Render(output))
 
 	return output
