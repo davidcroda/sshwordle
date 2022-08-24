@@ -27,7 +27,7 @@ func main() {
 }
 
 func migrateDb() {
-	m, err := migrate.New("file://./migrations/", "sqlite:///tmp/db.sqlite")
+	m, err := migrate.New("file://./migrations/", "sqlite:///app/db.sqlite")
 	if err != nil {
 		log.Fatal(err)
 	}

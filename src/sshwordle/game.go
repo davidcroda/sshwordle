@@ -119,7 +119,7 @@ func makeGuessesSlice() [][]*Guess {
 }
 
 func openDb() *sql.DB {
-	db, err := sql.Open("sqlite", "file:///tmp/db.sqlite")
+	db, err := sql.Open("sqlite", "file:///app/db.sqlite")
 	if err != nil {
 		log.Panic(err)
 	}
