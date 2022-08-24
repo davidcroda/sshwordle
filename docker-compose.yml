@@ -1,0 +1,6 @@
+services:
+  sshwordle:
+    build: .
+    ports:
+     - "1337:1337"
+    working_dir: /app
