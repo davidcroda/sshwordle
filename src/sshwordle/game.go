@@ -8,7 +8,6 @@ import (
 	"github.com/gliderlabs/ssh"
 	"log"
 	_ "modernc.org/sqlite"
-	"regexp"
 	"strings"
 	"time"
 
@@ -77,53 +76,21 @@ type Game struct {
 	backend      Backend
 	db           *sql.DB
 	complete     bool
+	showWord     bool
 	currentGuess int
 	currentCol   int
+	maxGuesses   int
 	guesses      [][]*Guess
-	height       int
 	identifier   string
 	keyboard     map[string]guessColor
-	maxGuesses   int
 	session      ssh.Session
-	showWord     bool
 	stopwatch    stopwatch.Model
 	viewport     viewport.Model
+	height       int
 	width        int
 	won          bool
 	word         string
 	results      []GameResult
-}
-
-func makeKeyboard() map[string]guessColor {
-	keyboard := make(map[string]guessColor)
-	for l := 'a'; l <= 'z'; l++ {
-		keyboard[fmt.Sprintf("%c", l)] = white
-	}
-	return keyboard
-}
-
-var difficulty = 5
-
-func makeGuessesSlice() [][]*Guess {
-	guesses := make([][]*Guess, difficulty+1)
-	for i := range guesses {
-		guesses[i] = make([]*Guess, difficulty)
-		for a := range guesses[i] {
-			guesses[i][a] = &Guess{
-				letter: "",
-				color:  white,
-			}
-		}
-	}
-	return guesses
-}
-
-func openDb() *sql.DB {
-	db, err := sql.Open("sqlite", "file:///app/db.sqlite")
-	if err != nil {
-		log.Panic(err)
-	}
-	return db
 }
 
 func NewGame(width int, height int, session ssh.Session, backend Backend) Game {
@@ -147,8 +114,42 @@ func NewGame(width int, height int, session ssh.Session, backend Backend) Game {
 		session:    session,
 		viewport:   viewport.New(width, height),
 		width:      width,
-		word:       backend.GetRandomWord(difficulty),
+		word:       backend.GetRandomWord(DIFFICULTY),
 	}
+}
+
+func (g Game) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmds []tea.Cmd
+	var cmd tea.Cmd
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		g.resizeViewport(msg)
+	case tea.KeyMsg:
+		return g.handleKeyPress(msg)
+	case gameResultsMsg:
+		g.results = msg
+	case gameCompleteMsg:
+		result := GameResult{
+			Seconds:    g.stopwatch.Elapsed(),
+			GuessCount: g.currentGuess + 1,
+			Word:       g.word,
+			Timestamp:  time.Now().Second(),
+		}
+		g.results = append(g.results, result)
+		cmds = append(cmds, g.stopwatch.Stop())
+		cmds = append(cmds, saveGameResult(g.db, g.identifier, &result))
+	case showPostGameMsg:
+		g.complete = true
+	case invalidMsg:
+		g.setAllGuesses(red)
+	}
+
+	g.viewport, cmd = g.viewport.Update(msg)
+	cmds = append(cmds, cmd)
+	g.stopwatch, cmd = g.stopwatch.Update(msg)
+	cmds = append(cmds, cmd)
+
+	return g, tea.Batch(cmds...)
 }
 
 type gameCompleteMsg struct{}
@@ -164,21 +165,45 @@ func InvalidWord() tea.Msg {
 }
 
 func (g Game) Init() tea.Cmd {
-	return tea.Batch(g.stopwatch.Init(), g.getGameResults(g.identifier))
-}
-
-func isLetter(key string) bool {
-	match, err := regexp.Match("^[a-z]$", []byte(key))
-	if err != nil {
-		return false
-	}
-	return match
+	return tea.Batch(g.stopwatch.Init(), getGameResults(g.db, g.identifier))
 }
 
 func (g *Game) setAllGuesses(color guessColor) {
 	for i := range g.guesses[g.currentGuess] {
 		g.guesses[g.currentGuess][i].color = color
 	}
+}
+
+func (g Game) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	k := strings.ToLower(msg.String())
+	if k == "ctrl+c" {
+		err := g.db.Close()
+		if err != nil {
+			log.Fatal(err)
+		}
+		return g, tea.Quit
+	} else if k == " " {
+		if g.complete {
+			ng := NewGame(g.width, g.height, g.session, g.backend)
+			return ng, ng.Init()
+		}
+		return g, nil
+	} else if g.won {
+		return g, nil
+	} else if k == "*" {
+		g.showWord = !g.showWord
+		return g, nil
+	} else if k == "backspace" {
+		g.handleBackspace()
+		return g, nil
+	} else if k == "enter" {
+		cmd := g.handleEnter()
+		return g, cmd
+	} else if isLetter(k) {
+		g.handleLetterPress(k)
+		return g, nil
+	}
+	return g, nil
 }
 
 func (g *Game) handleEnter() tea.Cmd {
@@ -264,33 +289,6 @@ nextGuess:
 	return false
 }
 
-var keys = []string{
-	"qwertyuiop",
-	"asdfghjkl",
-	"zxcvbnm",
-}
-
-func renderKeyboard(keyboard map[string]guessColor) string {
-	output := "\n\n"
-	for i := range keys {
-		for a := range keys[i] {
-			letter := string(keys[i][a])
-			color := keyboard[letter]
-			output += styles[color].
-				Render(" " + letter + " ")
-		}
-		output += "\n"
-	}
-	return output + "\n\n"
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
 func (g Game) headerView() string {
 	title := titleStyle.Render("SSH Wordle")
 	line := strings.Repeat("─", max(0, g.viewport.Width-lipgloss.Width(title)))
@@ -304,74 +302,17 @@ func (g Game) footerView() string {
 	return lipgloss.JoinHorizontal(lipgloss.Center, help, line, info) + "\n"
 }
 
-func (g Game) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmds []tea.Cmd
-	var cmd tea.Cmd
-	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		headerHeight := lipgloss.Height(g.headerView())
-		footerHeight := lipgloss.Height(g.footerView())
-		verticalMarginHeight := headerHeight + footerHeight
+func (g *Game) resizeViewport(msg tea.WindowSizeMsg) {
+	headerHeight := lipgloss.Height(g.headerView())
+	footerHeight := lipgloss.Height(g.footerView())
+	verticalMarginHeight := headerHeight + footerHeight
 
-		g.viewport.Height = msg.Height - verticalMarginHeight
-		g.viewport.Width = msg.Width
-		g.viewport.YPosition = headerHeight
+	g.viewport.Height = msg.Height - verticalMarginHeight
+	g.viewport.Width = msg.Width
+	g.viewport.YPosition = headerHeight
 
-		g.height = msg.Height - verticalMarginHeight
-		g.width = msg.Width
-	case tea.KeyMsg:
-		k := strings.ToLower(msg.String())
-		if k == "ctrl+c" {
-			err := g.db.Close()
-			if err != nil {
-				log.Fatal(err)
-			}
-			return g, tea.Quit
-		} else if k == " " {
-			if g.complete {
-				ng := NewGame(g.width, g.height, g.session, g.backend)
-				return ng, ng.Init()
-			}
-			return g, nil
-		} else if g.won {
-			return g, nil
-		} else if k == "*" {
-			g.showWord = !g.showWord
-			return g, nil
-		} else if k == "backspace" {
-			g.handleBackspace()
-			return g, nil
-		} else if k == "enter" {
-			cmd := g.handleEnter()
-			return g, cmd
-		} else if isLetter(k) {
-			g.handleLetterPress(k)
-			return g, nil
-		}
-	case gameResultsMsg:
-		g.results = msg
-	case gameCompleteMsg:
-		result := GameResult{
-			Seconds:    g.stopwatch.Elapsed(),
-			GuessCount: g.currentGuess + 1,
-			Word:       g.word,
-			Timestamp:  time.Now().Second(),
-		}
-		g.results = append(g.results, result)
-		cmds = append(cmds, g.stopwatch.Stop())
-		cmds = append(cmds, g.saveGameResult(&result))
-	case showPostGameMsg:
-		g.complete = true
-	case invalidMsg:
-		g.setAllGuesses(red)
-	}
-
-	g.viewport, cmd = g.viewport.Update(msg)
-	cmds = append(cmds, cmd)
-	g.stopwatch, cmd = g.stopwatch.Update(msg)
-	cmds = append(cmds, cmd)
-
-	return g, tea.Batch(cmds...)
+	g.height = msg.Height - verticalMarginHeight
+	g.width = msg.Width
 }
 
 func (g Game) View() string {

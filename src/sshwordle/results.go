@@ -1,14 +1,23 @@
 package sshwordle
 
 import (
+	"database/sql"
 	tea "github.com/charmbracelet/bubbletea"
 	"log"
 	"time"
 )
 
-func (g Game) saveGameResult(result *GameResult) tea.Cmd {
+func openDb() *sql.DB {
+	db, err := sql.Open("sqlite", "file:///app/db.sqlite")
+	if err != nil {
+		log.Panic(err)
+	}
+	return db
+}
+
+func saveGameResult(db *sql.DB, identifier string, result *GameResult) tea.Cmd {
 	return func() tea.Msg {
-		g.saveGameResults(result)
+		saveGameResults(db, identifier, result)
 		return showPostGameMsg{}
 	}
 }
@@ -20,14 +29,12 @@ type GameResult struct {
 	Timestamp  int           `json:"date"`
 }
 
-const dbName = "game-results-db"
-
-func (g *Game) saveGameResults(result *GameResult) {
-	stmt, err := g.db.Prepare("INSERT INTO games(user_identifier, seconds, guess_count, word, timestamp) VALUES(?,?,?,?,?)")
+func saveGameResults(db *sql.DB, identifier string, result *GameResult) {
+	stmt, err := db.Prepare("INSERT INTO games(user_identifier, seconds, guess_count, word, timestamp) VALUES(?,?,?,?,?)")
 	if err != nil {
 		log.Fatal(err)
 	}
-	_, err = stmt.Exec(g.identifier, result.Seconds, result.GuessCount, result.Word, result.Timestamp)
+	_, err = stmt.Exec(identifier, result.Seconds, result.GuessCount, result.Word, result.Timestamp)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -35,10 +42,10 @@ func (g *Game) saveGameResults(result *GameResult) {
 
 type gameResultsMsg []GameResult
 
-func (g *Game) getGameResults(id string) tea.Cmd {
+func getGameResults(db *sql.DB, identifier string) tea.Cmd {
 	return func() tea.Msg {
 		var results []GameResult
-		rows, err := g.db.Query("SELECT seconds, guess_count, word, timestamp FROM games WHERE user_identifier = ?", g.identifier)
+		rows, err := db.Query("SELECT seconds, guess_count, word, timestamp FROM games WHERE user_identifier = ?", identifier)
 		if err != nil {
 			log.Fatal(err)
 		}
