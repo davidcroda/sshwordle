@@ -1,7 +1,9 @@
 package sshwordle
 
 import (
+	"crypto/sha256"
 	"fmt"
+	"github.com/gliderlabs/ssh"
 	"regexp"
 )
 
@@ -35,6 +37,12 @@ func makeGuessesSlice() [][]*Guess {
 	return guesses
 }
 
+func makeIdentifier(session ssh.Session) string {
+	h := sha256.New()
+	h.Write(session.PublicKey().Marshal())
+	return fmt.Sprintf("%x", h.Sum(nil))
+}
+
 func renderKeyboard(keyboard map[string]guessColor) string {
 	output := "\n\n"
 	for i := range keys {
@@ -62,4 +70,12 @@ func isLetter(key string) bool {
 		return false
 	}
 	return match
+}
+
+func guessToWord(guess []*Guess) string {
+	word := ""
+	for i := range guess {
+		word += guess[i].letter
+	}
+	return word
 }

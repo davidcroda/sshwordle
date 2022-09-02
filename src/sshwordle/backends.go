@@ -132,11 +132,3 @@ func (b ApiBackend) ValidateWord(guess []*Guess) bool {
 	}
 	return data.Word != ""
 }
-
-func guessToWord(guess []*Guess) string {
-	word := ""
-	for i := range guess {
-		word += guess[i].letter
-	}
-	return word
-}

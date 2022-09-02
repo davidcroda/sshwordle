@@ -1,7 +1,6 @@
 package sshwordle
 
 import (
-	"crypto/sha256"
 	"database/sql"
 	"fmt"
 	"github.com/charmbracelet/bubbles/progress"
@@ -28,16 +27,16 @@ const (
 )
 
 var (
-	style = lipgloss.NewStyle().Bold(true).
-		Foreground(lipgloss.Color("#000000")).
-		Background(lipgloss.Color("#fefefe"))
-	greenStyle  = style.Copy().Background(lipgloss.Color("#04b575"))
-	yellowStyle = style.Copy().Background(lipgloss.Color("#bd8024"))
-	greyStyle   = style.Copy().Background(lipgloss.Color("#636664"))
-	redStyle    = style.Copy().Background(lipgloss.Color("#d63131"))
+	baseStyle = lipgloss.NewStyle().Bold(true).
+			Foreground(lipgloss.Color("#000000")).
+			Background(lipgloss.Color("#fefefe"))
+	greenStyle  = baseStyle.Copy().Background(lipgloss.Color("#04b575"))
+	yellowStyle = baseStyle.Copy().Background(lipgloss.Color("#bd8024"))
+	greyStyle   = baseStyle.Copy().Background(lipgloss.Color("#636664"))
+	redStyle    = baseStyle.Copy().Background(lipgloss.Color("#d63131"))
 	layoutStyle = lipgloss.NewStyle().Align(lipgloss.Center)
 
-	winnerStyle = style.Copy().Background(lipgloss.Color("#58565e")).
+	winnerStyle = baseStyle.Copy().Background(lipgloss.Color("#58565e")).
 			Foreground(lipgloss.Color("#fefefe")).
 			BorderStyle(lipgloss.DoubleBorder()).
 			Padding(5).
@@ -63,7 +62,7 @@ var styles = map[guessColor]lipgloss.Style{
 	green:  greenStyle,
 	yellow: yellowStyle,
 	grey:   greyStyle,
-	white:  style,
+	white:  baseStyle,
 	red:    redStyle,
 }
 
@@ -95,12 +94,9 @@ type Game struct {
 
 func NewGame(width int, height int, session ssh.Session, backend Backend) Game {
 	guesses := makeGuessesSlice()
-
 	db := openDb()
-
-	h := sha256.New()
-	h.Write(session.PublicKey().Marshal())
-	identifier := fmt.Sprintf("%x", h.Sum(nil))
+	identifier := makeIdentifier(session)
+	keyboard := makeKeyboard()
 
 	return Game{
 		backend:    backend,
@@ -108,7 +104,7 @@ func NewGame(width int, height int, session ssh.Session, backend Backend) Game {
 		guesses:    guesses,
 		height:     height,
 		identifier: identifier,
-		keyboard:   makeKeyboard(),
+		keyboard:   keyboard,
 		maxGuesses: len(guesses),
 		stopwatch:  stopwatch.NewWithInterval(time.Second),
 		session:    session,
@@ -150,6 +146,15 @@ func (g Game) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	cmds = append(cmds, cmd)
 
 	return g, tea.Batch(cmds...)
+}
+
+func (g Game) View() string {
+	if !g.complete {
+		g.viewport.SetContent(g.renderGameBoard())
+	} else {
+		g.viewport.SetContent(g.renderPostGame())
+	}
+	return fmt.Sprintf("%s\n%s\n%s", g.headerView(), g.viewport.View(), g.footerView())
 }
 
 type gameCompleteMsg struct{}
@@ -207,14 +212,10 @@ func (g Game) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (g *Game) handleEnter() tea.Cmd {
-	if g.currentCol != len(g.word) || g.currentGuess >= g.maxGuesses {
+	if g.currentCol != len(g.word) || g.currentGuess >= len(g.guesses) {
 		return nil
 	}
 
-	current := g.guesses[g.currentGuess][g.currentCol-1]
-	if current == nil || current.letter == "" {
-		return nil
-	}
 	if !g.backend.ValidateWord(g.guesses[g.currentGuess]) {
 		return InvalidWord
 	}
@@ -222,7 +223,7 @@ func (g *Game) handleEnter() tea.Cmd {
 		g.won = true
 		return GameComplete
 	}
-	if g.currentGuess >= g.maxGuesses-1 {
+	if g.currentGuess >= len(g.guesses)-1 {
 		return GameComplete
 	}
 	g.currentGuess++
@@ -234,13 +235,12 @@ func (g *Game) handleBackspace() {
 	if g.currentCol > 0 {
 		g.currentCol--
 		g.guesses[g.currentGuess][g.currentCol].letter = ""
-	} else {
-		g.setAllGuesses(white)
+		g.guesses[g.currentGuess][g.currentCol].color = white
 	}
 }
 
 func (g *Game) handleLetterPress(k string) {
-	if g.currentCol < len(g.word) && g.currentGuess <= g.maxGuesses-1 {
+	if g.currentCol < len(g.word) && g.currentGuess < len(g.guesses) {
 		g.guesses[g.currentGuess][g.currentCol].letter = k
 		g.currentCol++
 	}
@@ -257,36 +257,38 @@ func (g *Game) gradeCurrentGuess() bool {
 	word := g.word
 	guess := g.guesses[g.currentGuess]
 	used := make(map[int]bool)
-	matched := 0
 
 	for i := range guess {
 		if guess[i].letter == string(word[i]) {
 			g.setGuessColor(guess[i], green)
 			used[i] = true
-			matched++
 		}
 	}
-	if matched == len(word) {
+	if len(used) == len(word) {
 		return true
 	}
 
-nextGuess:
 	for i := range guess {
 		if guess[i].color == green {
 			continue
 		}
-		letter := guess[i].letter
-		for a := range word {
-			if string(word[a]) == letter && !used[a] {
-				g.setGuessColor(guess[i], yellow)
-				used[a] = true
-				continue nextGuess
-			}
+		if matched, index := g.checkLetterIncorrectPosition(guess[i], used); matched {
+			used[index] = true
 		}
-		g.setGuessColor(guess[i], grey)
 	}
 
 	return false
+}
+
+func (g *Game) checkLetterIncorrectPosition(guess *Guess, used map[int]bool) (bool, int) {
+	for index := range g.word {
+		if string(g.word[index]) == guess.letter && !used[index] {
+			g.setGuessColor(guess, yellow)
+			return true, index
+		}
+	}
+	g.setGuessColor(guess, grey)
+	return false, 0
 }
 
 func (g Game) headerView() string {
@@ -296,8 +298,8 @@ func (g Game) headerView() string {
 }
 
 func (g Game) footerView() string {
-	info := infoStyle.Render(fmt.Sprintf("Guess %d/%d, Seconds: %s", g.currentGuess+1, g.maxGuesses, g.stopwatch.View()))
 	help := helpStyle.Render(fmt.Sprintf("ctrl+c - quit"))
+	info := infoStyle.Render(fmt.Sprintf("Guess %d/%d, Seconds: %s", g.currentGuess+1, len(g.guesses), g.stopwatch.View()))
 	line := strings.Repeat("─", max(0, g.viewport.Width-lipgloss.Width(info)-lipgloss.Width(help)))
 	return lipgloss.JoinHorizontal(lipgloss.Center, help, line, info) + "\n"
 }
@@ -313,15 +315,6 @@ func (g *Game) resizeViewport(msg tea.WindowSizeMsg) {
 
 	g.height = msg.Height - verticalMarginHeight
 	g.width = msg.Width
-}
-
-func (g Game) View() string {
-	if !g.complete {
-		g.viewport.SetContent(g.renderGameBoard())
-	} else {
-		g.viewport.SetContent(g.renderPostGame())
-	}
-	return fmt.Sprintf("%s\n%s\n%s", g.headerView(), g.viewport.View(), g.footerView())
 }
 
 func (g Game) renderPostGame() string {
@@ -360,21 +353,8 @@ func (g Game) renderPostGame() string {
 }
 
 func (g Game) renderGameBoard() string {
-	output := "  "
 
-	padding := 3
-	for row := range g.guesses {
-		for col := range g.guesses[row] {
-			guess := g.guesses[row][col]
-			if guess.letter == "" {
-				output += style.Render(strings.Repeat(" ", padding))
-			} else {
-				output += styles[guess.color].Render(" " + guess.letter + " ")
-			}
-			output += strings.Repeat(" ", padding)
-		}
-		output += "\n\n  "
-	}
+	output := g.renderGrid()
 
 	output += renderKeyboard(g.keyboard)
 
@@ -383,6 +363,24 @@ func (g Game) renderGameBoard() string {
 	}
 
 	return g.center(output)
+}
+
+func (g Game) renderGrid() string {
+	output := " "
+	padding := 3
+	for row := range g.guesses {
+		for col := range g.guesses[row] {
+			guess := g.guesses[row][col]
+			if guess.letter == "" {
+				output += baseStyle.Render(strings.Repeat(" ", padding))
+			} else {
+				output += styles[guess.color].Render(" " + guess.letter + " ")
+			}
+			output += strings.Repeat(" ", padding)
+		}
+		output += "\n\n  "
+	}
+	return output
 }
 
 func (g Game) center(output string) string {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/charmbracelet/wish"
-	lm "github.com/charmbracelet/wish/logging"
+	loggingMiddleware "github.com/charmbracelet/wish/logging"
 	"log"
 	"math/rand"
 	"os"
@@ -15,7 +15,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/gliderlabs/ssh"
 
-	bm "github.com/charmbracelet/wish/bubbletea"
+	teaMiddleware "github.com/charmbracelet/wish/bubbletea"
 )
 
 func StartServer(host string, port int, useApi bool) {
@@ -24,8 +24,8 @@ func StartServer(host string, port int, useApi bool) {
 		wish.WithPublicKeyAuth(publicKeyHandler),
 		wish.WithHostKeyPath(".ssh/term_info_ed25519"),
 		wish.WithMiddleware(
-			bm.Middleware(getTeaHandler(useApi)),
-			lm.Middleware(),
+			teaMiddleware.Middleware(sshwordleTeaHandler(useApi)),
+			loggingMiddleware.Middleware(),
 		),
 	)
 	if err != nil {
@@ -55,9 +55,9 @@ func publicKeyHandler(_ctx ssh.Context, _key ssh.PublicKey) bool {
 	return true
 }
 
-func getTeaHandler(useApi bool) bm.BubbleTeaHandler {
-	return func(s ssh.Session) (tea.Model, []tea.ProgramOption) {
-		pty, _, active := s.Pty()
+func sshwordleTeaHandler(useApi bool) teaMiddleware.BubbleTeaHandler {
+	return func(session ssh.Session) (tea.Model, []tea.ProgramOption) {
+		pty, _, active := session.Pty()
 		if !active {
 			fmt.Println("no active terminal, skipping")
 			return nil, nil
@@ -72,7 +72,7 @@ func getTeaHandler(useApi bool) bm.BubbleTeaHandler {
 			backend = NewStaticBackend()
 		}
 
-		g := NewGame(pty.Window.Width, pty.Window.Height, s, backend)
+		g := NewGame(pty.Window.Width, pty.Window.Height, session, backend)
 		return g, nil
 	}
 }
