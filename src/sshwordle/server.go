@@ -3,6 +3,7 @@ package sshwordle
 import (
 	"context"
 	"fmt"
+	"github.com/charmbracelet/ssh"
 	"github.com/charmbracelet/wish"
 	loggingMiddleware "github.com/charmbracelet/wish/logging"
 	"log"
@@ -13,7 +14,6 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/gliderlabs/ssh"
 
 	teaMiddleware "github.com/charmbracelet/wish/bubbletea"
 )
@@ -55,7 +55,7 @@ func publicKeyHandler(_ctx ssh.Context, _key ssh.PublicKey) bool {
 	return true
 }
 
-func sshwordleTeaHandler(useApi bool) teaMiddleware.BubbleTeaHandler {
+func sshwordleTeaHandler(useApi bool) teaMiddleware.Handler {
 	return func(session ssh.Session) (tea.Model, []tea.ProgramOption) {
 		pty, _, active := session.Pty()
 		if !active {

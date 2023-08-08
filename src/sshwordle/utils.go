@@ -3,7 +3,7 @@ package sshwordle
 import (
 	"crypto/sha256"
 	"fmt"
-	"github.com/gliderlabs/ssh"
+	"github.com/charmbracelet/ssh"
 	"regexp"
 )
 
