@@ -3,8 +3,9 @@ package sshwordle
 import (
 	"crypto/sha256"
 	"fmt"
-	"github.com/charmbracelet/ssh"
 	"regexp"
+
+	"github.com/charmbracelet/ssh"
 )
 
 var keys = []string{
@@ -39,7 +40,13 @@ func makeGuessesSlice() [][]*Guess {
 
 func makeIdentifier(session ssh.Session) string {
 	h := sha256.New()
-	h.Write(session.PublicKey().Marshal())
+
+	if key := session.PublicKey(); key != nil {
+		h.Write(key.Marshal())
+	} else {
+		h.Write([]byte(session.User()))
+	}
+
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
 

@@ -2,13 +2,14 @@ package sshwordle
 
 import (
 	"database/sql"
-	tea "github.com/charmbracelet/bubbletea"
 	"log"
 	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func openDb() *sql.DB {
-	db, err := sql.Open("sqlite", "file:///app/db.sqlite")
+	db, err := sql.Open("sqlite", "file:db.sqlite")
 	if err != nil {
 		log.Panic(err)
 	}

@@ -3,12 +3,13 @@ package sshwordle
 import (
 	"database/sql"
 	"fmt"
-	"github.com/charmbracelet/bubbles/progress"
-	"github.com/charmbracelet/ssh"
 	"log"
-	_ "modernc.org/sqlite"
 	"strings"
 	"time"
+
+	"github.com/charmbracelet/bubbles/progress"
+	"github.com/charmbracelet/ssh"
+	_ "modernc.org/sqlite"
 
 	"github.com/charmbracelet/bubbles/stopwatch"
 	"github.com/charmbracelet/bubbles/viewport"
