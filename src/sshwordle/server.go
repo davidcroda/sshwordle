@@ -22,6 +22,7 @@ func StartServer(host string, port int, useApi bool) {
 	s, err := wish.NewServer(
 		wish.WithAddress(fmt.Sprintf("%s:%d", host, port)),
 		wish.WithPublicKeyAuth(publicKeyHandler),
+		wish.WithPasswordAuth(passwordHandler),
 		wish.WithHostKeyPath(".ssh/term_info_ed25519"),
 		wish.WithMiddleware(
 			teaMiddleware.Middleware(sshwordleTeaHandler(useApi)),
@@ -52,6 +53,10 @@ func StartServer(host string, port int, useApi bool) {
 }
 
 func publicKeyHandler(_ctx ssh.Context, _key ssh.PublicKey) bool {
+	return true
+}
+
+func passwordHandler(_ ssh.Context, _ string) bool {
 	return true
 }
 

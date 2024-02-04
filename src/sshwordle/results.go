@@ -2,9 +2,10 @@ package sshwordle
 
 import (
 	"database/sql"
-	tea "github.com/charmbracelet/bubbletea"
 	"log"
 	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func openDb() *sql.DB {
